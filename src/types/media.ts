@@ -46,12 +46,10 @@ export interface ActiveMediaTrack {
   subtitleUrl: string | null;
   subtitleLabel: string | null;
   tvItemId?: string | null;
-  remoteSourceLabel?: string | null;
 }
 
 export interface AppPreferences {
   autoSaveCloud: boolean;
-  autoSyncPlayback: boolean;
   defaultTtlMinutes: number;
   lastProviderName: string;
   lastServerUrl: string;
@@ -63,25 +61,8 @@ export interface AppPreferences {
 export interface SyncPresence {
   pcCount: number;
   tvCount: number;
+  mobileCount: number;
   totalCount: number;
-}
-
-export interface LivePlaybackState {
-  eventId: string;
-  itemId: string;
-  name: string;
-  collection: string;
-  kind: 'video' | 'audio' | 'image';
-  extension: string;
-  size: number;
-  subtitleId: string | null;
-  subtitleName: string | null;
-  senderRole: 'pc' | 'tv';
-  senderDeviceId: string;
-  action: 'load' | 'play' | 'pause' | 'seek' | 'close';
-  currentTime: number;
-  isPlaying: boolean;
-  updatedAt: number;
 }
 
 export interface CloudPreset {
@@ -129,6 +110,8 @@ export interface TvNetworkInfo {
   lanIps: string[];
   pcUrls?: string[];
   tvUrls: string[];
+  mobileUrls?: string[];
   currentOriginTvUrl: string;
+  currentOriginMobileUrl?: string;
   preferredBaseUrl?: string;
 }

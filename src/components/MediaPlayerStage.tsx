@@ -21,13 +21,6 @@ import { formatBytes, formatDate, formatTimeSeconds } from '../utils/media';
 
 const AUDIO_FALLBACK_ART = '/src/assets/images/audio_vinyl_artwork_1795357589564.jpg';
 
-export interface RemotePlaybackCommand {
-  action: 'play' | 'pause' | 'seek';
-  currentTime: number;
-  isPlaying: boolean;
-  seq: number;
-}
-
 interface MediaPlayerStageProps {
   activeTrack: ActiveMediaTrack | null;
   queueIndex: number;
@@ -36,9 +29,6 @@ interface MediaPlayerStageProps {
   onPrev: () => void;
   onNext: () => void;
   onShare?: () => void;
-  onSendToTvNow?: () => void;
-  remoteCommand?: RemotePlaybackCommand | null;
-  onPlaybackControl?: (action: 'play' | 'pause' | 'seek', currentTime: number, isPlaying: boolean) => void;
   onClose: () => void;
 }
 
@@ -50,15 +40,11 @@ export const MediaPlayerStage: React.FC<MediaPlayerStageProps> = ({
   onPrev,
   onNext,
   onShare,
-  onSendToTvNow,
-  remoteCommand,
-  onPlaybackControl,
   onClose,
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
-  const suppressSyncEmitUntilRef = useRef<number>(0);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -86,33 +72,7 @@ export const MediaPlayerStage: React.FC<MediaPlayerStageProps> = ({
     setDuration(0);
     setMediaError(null);
     setIsPlaying(false);
-    suppressSyncEmitUntilRef.current = Date.now() + 900;
   }, [activeTrack?.streamUrl]);
-
-  // Apply remote play/pause/seek commands without echoing back to server
-  useEffect(() => {
-    if (!remoteCommand || !activeTrack) return;
-    const el = kind === 'video' ? videoRef.current : kind === 'audio' ? audioRef.current : null;
-    if (!el) return;
-
-    suppressSyncEmitUntilRef.current = Date.now() + 900;
-    if (
-      typeof remoteCommand.currentTime === 'number' &&
-      Math.abs((el.currentTime || 0) - remoteCommand.currentTime) > 1.5
-    ) {
-      try {
-        el.currentTime = remoteCommand.currentTime;
-        setCurrentTime(remoteCommand.currentTime);
-      } catch {
-        // Ignore seek before metadata loaded
-      }
-    }
-    if (remoteCommand.action === 'pause') {
-      el.pause();
-    } else if (remoteCommand.action === 'play') {
-      void el.play().catch(() => undefined);
-    }
-  }, [remoteCommand, activeTrack, kind]);
 
   useEffect(() => {
     if (activeMediaEl) {
@@ -191,9 +151,6 @@ export const MediaPlayerStage: React.FC<MediaPlayerStageProps> = ({
     if (el && Number.isFinite(next)) {
       el.currentTime = next;
       setCurrentTime(next);
-      if (Date.now() > suppressSyncEmitUntilRef.current) {
-        onPlaybackControl?.('seek', next, !el.paused);
-      }
     }
   };
 
@@ -307,18 +264,8 @@ export const MediaPlayerStage: React.FC<MediaPlayerStageProps> = ({
           ref={audioRef}
           src={activeTrack.streamUrl}
           autoPlay
-          onPlay={(e) => {
-            setIsPlaying(true);
-            if (Date.now() > suppressSyncEmitUntilRef.current) {
-              onPlaybackControl?.('play', e.currentTarget.currentTime, true);
-            }
-          }}
-          onPause={(e) => {
-            setIsPlaying(false);
-            if (Date.now() > suppressSyncEmitUntilRef.current) {
-              onPlaybackControl?.('pause', e.currentTarget.currentTime, false);
-            }
-          }}
+          onPlay={() => setIsPlaying(true)}
+          onPause={() => setIsPlaying(false)}
           onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
           onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
           onEnded={() => {
@@ -346,9 +293,7 @@ export const MediaPlayerStage: React.FC<MediaPlayerStageProps> = ({
             </div>
 
             <div className="min-w-0">
-              <p className="text-[11px] font-medium text-sky-400">
-                {activeTrack.remoteSourceLabel || 'Reproduzindo áudio'}
-              </p>
+              <p className="text-[11px] font-medium text-sky-400">Reproduzindo áudio</p>
               <h3 className="truncate text-sm font-semibold text-slate-100">{activeTrack.entry.name}</h3>
               <p className="mt-0.5 truncate text-xs text-slate-400">
                 <span>{activeTrack.entry.extension.toUpperCase() || 'Áudio'}</span>
@@ -486,12 +431,6 @@ export const MediaPlayerStage: React.FC<MediaPlayerStageProps> = ({
             <span>{activeTrack.entry.extension.toUpperCase() || 'Vídeo'}</span>
             <span className="mx-1.5" aria-hidden="true">·</span>
             <span className="font-mono tabular-nums">{formatBytes(activeTrack.entry.size)}</span>
-            {activeTrack.remoteSourceLabel && (
-              <>
-                <span className="mx-1.5" aria-hidden="true">·</span>
-                <span className="text-sky-400">{activeTrack.remoteSourceLabel}</span>
-              </>
-            )}
             {activeTrack.subtitleLabel && (
               <>
                 <span className="mx-1.5" aria-hidden="true">·</span>
@@ -510,16 +449,6 @@ export const MediaPlayerStage: React.FC<MediaPlayerStageProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
-          {onSendToTvNow && (
-            <button
-              type="button"
-              onClick={onSendToTvNow}
-              className="inline-flex items-center gap-1.5 rounded-md bg-sky-600 px-2.5 py-1 text-xs font-semibold text-white transition-colors hover:bg-sky-500 whitespace-nowrap"
-            >
-              <Play className="h-3 w-3" />
-              <span>Enviar para TV</span>
-            </button>
-          )}
           {onShare && (
             <button
               type="button"
@@ -592,23 +521,8 @@ export const MediaPlayerStage: React.FC<MediaPlayerStageProps> = ({
           controls
           autoPlay
           playsInline
-          onPlay={(e) => {
-            setIsPlaying(true);
-            if (Date.now() > suppressSyncEmitUntilRef.current) {
-              onPlaybackControl?.('play', e.currentTarget.currentTime, true);
-            }
-          }}
-          onPause={(e) => {
-            setIsPlaying(false);
-            if (Date.now() > suppressSyncEmitUntilRef.current) {
-              onPlaybackControl?.('pause', e.currentTarget.currentTime, false);
-            }
-          }}
-          onSeeked={(e) => {
-            if (Date.now() > suppressSyncEmitUntilRef.current) {
-              onPlaybackControl?.('seek', e.currentTarget.currentTime, !e.currentTarget.paused);
-            }
-          }}
+          onPlay={() => setIsPlaying(true)}
+          onPause={() => setIsPlaying(false)}
           onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
           onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
           onEnded={() => {

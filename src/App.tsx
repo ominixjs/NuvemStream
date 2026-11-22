@@ -4,7 +4,6 @@ import {
   ChevronRight,
   Cloud,
   Menu,
-  Radio,
   RefreshCw,
   Search,
   X,
@@ -12,7 +11,8 @@ import {
 import { ConnectCloudModal } from './components/ConnectCloudModal';
 import { DesktopExeModal } from './components/DesktopExeModal';
 import { FolderBrowser } from './components/FolderBrowser';
-import { MediaPlayerStage, type RemotePlaybackCommand } from './components/MediaPlayerStage';
+import { MediaPlayerStage } from './components/MediaPlayerStage';
+import { MobileApp } from './components/MobileApp';
 import { ShareMediaModal, type ShareTargetInfo } from './components/ShareMediaModal';
 import { Sidebar } from './components/Sidebar';
 import { TvApp } from './components/TvApp';
@@ -24,7 +24,6 @@ import type {
   CloudConnection,
   CloudEntry,
   FolderTreeNode,
-  LivePlaybackState,
   MediaFilter,
   SavedCloudRegistration,
   SortDirection,
@@ -116,8 +115,8 @@ export default function App() {
   const [activeTrack, setActiveTrack] = useState<ActiveMediaTrack | null>(null);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
-  // TV Mode & LAN Library State
-  const [isTvRoute, setIsTvRoute] = useState<boolean>(() => window.location.pathname === '/tv');
+  // TV & Mobile Route + LAN Library State
+  const [routePath, setRoutePath] = useState<string>(() => window.location.pathname);
   const [pcPanel, setPcPanel] = useState<'browser' | 'tv-manager'>('browser');
   const [tvCatalog, setTvCatalog] = useState<TvCatalogItem[]>([]);
   const [tvNetworkInfo, setTvNetworkInfo] = useState<TvNetworkInfo | null>(null);
@@ -129,34 +128,26 @@ export default function App() {
   const [shareStreamUrl, setShareStreamUrl] = useState<string | null>(null);
   const [isPublishingShare, setIsPublishingShare] = useState(false);
 
-  // Temporary cloud registrations & automatic live sync
+  // Temporary cloud registrations & catalog live sync
   const [savedRegistrations, setSavedRegistrations] = useState<SavedCloudRegistration[]>([]);
   const [preferences, setPreferences] = useState<AppPreferences | null>(null);
   const [isSyncingFolderToTv, setIsSyncingFolderToTv] = useState(false);
   const [isSyncingCloudId, setIsSyncingCloudId] = useState<string | null>(null);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
-  const [autoSyncNotice, setAutoSyncNotice] = useState<string | null>(null);
-  const [remoteCommand, setRemoteCommand] = useState<RemotePlaybackCommand | null>(null);
 
   const localInputRef = useRef<HTMLInputElement | null>(null);
   const activeObjectUrlsRef = useRef<string[]>([]);
-  const suppressSyncEmitUntilRef = useRef<number>(0);
   const tvCatalogRef = useRef<TvCatalogItem[]>([]);
-  const activeTrackRef = useRef<ActiveMediaTrack | null>(null);
-  const autoSyncEnabledRef = useRef<boolean>(true);
   const sourceModeRef = useRef<SourceMode | null>(null);
   const autoRestoreAttemptedRef = useRef<boolean>(false);
   const userDisconnectedRef = useRef<boolean>(false);
 
-  const autoSyncEnabled = preferences ? preferences.autoSyncPlayback : true;
   tvCatalogRef.current = tvCatalog;
-  activeTrackRef.current = activeTrack;
-  autoSyncEnabledRef.current = autoSyncEnabled;
   sourceModeRef.current = sourceMode;
 
   useEffect(() => {
     const onPopState = () => {
-      setIsTvRoute(window.location.pathname === '/tv');
+      setRoutePath(window.location.pathname);
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
@@ -169,15 +160,8 @@ export default function App() {
     if (currentFull !== targetFull) {
       window.history.pushState({}, '', targetFull);
     }
-    setIsTvRoute(nextUrl.pathname === '/tv');
+    setRoutePath(nextUrl.pathname);
     setMobileSidebarOpen(false);
-  }, []);
-
-  const showAutoSyncToast = useCallback((text: string) => {
-    setAutoSyncNotice(text);
-    window.setTimeout(() => {
-      setAutoSyncNotice((prev) => (prev === text ? null : prev));
-    }, 4500);
   }, []);
 
   const fetchTvCatalog = useCallback(async (): Promise<TvCatalogItem[]> => {
@@ -223,36 +207,6 @@ export default function App() {
       // Ignore background preference errors
     }
     return null;
-  }, []);
-
-  const handleToggleAutoSync = useCallback(async (next: boolean) => {
-    setPreferences((prev) =>
-      prev
-        ? { ...prev, autoSyncPlayback: next }
-        : {
-            autoSaveCloud: true,
-            autoSyncPlayback: next,
-            defaultTtlMinutes: 720,
-            lastProviderName: 'Koofr',
-            lastServerUrl: 'https://app.koofr.net/dav/Koofr',
-            lastUsername: '',
-            lastSyncPath: '/',
-            updatedAt: null,
-          }
-    );
-    try {
-      const res = await fetch('/api/preferences', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ autoSyncPlayback: next }),
-      });
-      const data = await res.json();
-      if (res.ok && data.preferences) {
-        setPreferences(data.preferences as AppPreferences);
-      }
-    } catch {
-      // Ignore network failure
-    }
   }, []);
 
   useEffect(() => {
@@ -471,7 +425,7 @@ export default function App() {
         await Promise.all([fetchSavedRegistrations(), fetchTvCatalog()]);
         const count = data.savedRegistration.itemCount ?? 0;
         setSyncNotice(
-          `Credenciais salvas temporariamente em memória e TV sincronizada (${count} mídias encontradas em "${data.savedRegistration.syncPath}").`
+          `Nuvem conectada e enviada automaticamente para TV e Celular (${count} mídias carregadas de "${data.savedRegistration.syncPath}").`
         );
       }
     } catch (err) {
@@ -482,37 +436,107 @@ export default function App() {
   };
 
   const handleSyncCurrentFolderToTv = useCallback(async () => {
-    if (!cloudConnection) return;
-    setIsSyncingFolderToTv(true);
-    setFolderError(null);
-    setSyncNotice(null);
-    try {
-      const res = await fetch('/api/cloud/saved/from-session', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${cloudConnection.sessionId}`,
-        },
-        body: JSON.stringify({
-          syncPath: currentPath,
-          ttlMinutes: 720,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data?.error || 'Não foi possível sincronizar esta pasta com a TV.');
+    if (sourceMode === 'cloud' && cloudConnection) {
+      setIsSyncingFolderToTv(true);
+      setFolderError(null);
+      setSyncNotice(null);
+      try {
+        const res = await fetch('/api/cloud/saved/from-session', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${cloudConnection.sessionId}`,
+          },
+          body: JSON.stringify({
+            syncPath: currentPath,
+            ttlMinutes: 720,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error || 'Não foi possível sincronizar esta pasta com a TV e o Celular.');
+        }
+        await Promise.all([fetchSavedRegistrations(), fetchTvCatalog()]);
+        const reg = data.registration as SavedCloudRegistration | undefined;
+        setSyncNotice(
+          `Pasta "${reg?.syncPath || currentPath}" carregada na TV e no Celular (${reg?.itemCount ?? 0} mídias disponíveis).`
+        );
+      } catch (err) {
+        setFolderError(err instanceof Error ? err.message : 'Erro ao sincronizar pasta.');
+      } finally {
+        setIsSyncingFolderToTv(false);
       }
-      await Promise.all([fetchSavedRegistrations(), fetchTvCatalog()]);
-      const reg = data.registration as SavedCloudRegistration | undefined;
-      setSyncNotice(
-        `Pasta "${reg?.syncPath || currentPath}" sincronizada na biblioteca da TV (${reg?.itemCount ?? 0} mídias, válido por 12h em memória).`
-      );
-    } catch (err) {
-      setFolderError(err instanceof Error ? err.message : 'Erro ao sincronizar pasta com a TV.');
-    } finally {
-      setIsSyncingFolderToTv(false);
+      return;
     }
-  }, [cloudConnection, currentPath, fetchSavedRegistrations, fetchTvCatalog]);
+
+    if (sourceMode === 'local' && localIndex) {
+      const prefix = currentPath === '/' ? '/' : `${currentPath}/`;
+      const records = Array.from(localIndex.filesByPath.entries())
+        .filter(([filePath, rec]) => {
+          const inFolder = currentPath === '/' || filePath === currentPath || filePath.startsWith(prefix);
+          if (!inFolder) return false;
+          return (
+            rec.entry.kind === 'video' ||
+            rec.entry.kind === 'audio' ||
+            rec.entry.kind === 'image' ||
+            rec.entry.kind === 'subtitle'
+          );
+        })
+        .sort((a, b) => {
+          // Upload subtitles first so matching videos auto-link cleanly
+          if (a[1].entry.kind === 'subtitle' && b[1].entry.kind !== 'subtitle') return -1;
+          if (a[1].entry.kind !== 'subtitle' && b[1].entry.kind === 'subtitle') return 1;
+          return a[0].localeCompare(b[0]);
+        });
+
+      if (records.length === 0) {
+        setSyncNotice('Nenhuma mídia compatível encontrada nesta pasta local.');
+        return;
+      }
+
+      setIsSyncingFolderToTv(true);
+      setFolderError(null);
+      setSyncNotice(null);
+
+      let added = 0;
+      const folderParts = currentPath.split('/').filter(Boolean);
+      const collectionName =
+        folderParts[folderParts.length - 1] || localIndex.rootLabel || 'Pasta do PC';
+
+      try {
+        for (const [, rec] of records) {
+          if (rec.file.size > 1.5 * 1024 * 1024 * 1024) continue;
+          const alreadyExists = tvCatalogRef.current.some(
+            (item) => item.name === rec.file.name && item.size === rec.file.size
+          );
+          if (alreadyExists) continue;
+
+          const res = await fetch('/api/tv/upload', {
+            method: 'POST',
+            headers: {
+              'X-File-Name': encodeURIComponent(rec.file.name),
+              'X-Collection-Name': encodeURIComponent(collectionName),
+              'X-Mime-Type': rec.file.type || 'application/octet-stream',
+            },
+            body: rec.file,
+          });
+          if (res.ok && rec.entry.kind !== 'subtitle') {
+            added++;
+          }
+        }
+        await fetchTvCatalog();
+        setSyncNotice(
+          added > 0
+            ? `Pasta "${collectionName}" enviada para TV e Celular (${added} mídias carregadas na hora).`
+            : `Todos os arquivos compatíveis da pasta "${collectionName}" já estão disponíveis na TV e no Celular.`
+        );
+      } catch (err) {
+        setFolderError(err instanceof Error ? err.message : 'Erro ao enviar pasta local.');
+      } finally {
+        setIsSyncingFolderToTv(false);
+      }
+    }
+  }, [sourceMode, cloudConnection, localIndex, currentPath, fetchSavedRegistrations, fetchTvCatalog]);
 
   const handleSyncSavedCloud = useCallback(
     async (id: string, syncPath?: string) => {
@@ -531,7 +555,7 @@ export default function App() {
             setTvUploadStatus(
               reg.syncError
                 ? `Erro ao sincronizar ${reg.providerName}: ${reg.syncError}`
-                : `${reg.providerName} (${reg.syncPath}) atualizado na TV com ${reg.itemCount} mídias.`
+                : `${reg.providerName} (${reg.syncPath}) atualizado na TV e no Celular com ${reg.itemCount} mídias.`
             );
           }
         }
@@ -560,7 +584,7 @@ export default function App() {
         }
         applyOpenedCloudSession(data);
         if (silent) {
-          showAutoSyncToast(`Sessão restaurada automaticamente: ${data.providerName} (${data.username})`);
+          setSyncNotice(`Sessão restaurada automaticamente no PC: ${data.providerName} (${data.username}).`);
         }
       } catch (err) {
         if (!silent) {
@@ -572,7 +596,7 @@ export default function App() {
         }
       }
     },
-    [applyOpenedCloudSession, showAutoSyncToast]
+    [applyOpenedCloudSession]
   );
 
   // Auto-restore active temporary cloud credentials on startup / page reload
@@ -701,94 +725,7 @@ export default function App() {
     return [];
   }, [sourceMode, folderCache, currentPath, localIndex]);
 
-  const handleRemotePlaybackFromTv = useCallback(
-    async (playback: LivePlaybackState) => {
-      if (!autoSyncEnabledRef.current) return;
-      if (playback.senderRole !== 'tv') return;
-      if (playback.action === 'close') return;
-
-      const currentActive = activeTrackRef.current;
-      if (currentActive?.tvItemId === playback.itemId && playback.action !== 'load') {
-        suppressSyncEmitUntilRef.current = Date.now() + 900;
-        setRemoteCommand({
-          action: playback.action === 'pause' ? 'pause' : playback.action === 'seek' ? 'seek' : 'play',
-          currentTime: playback.currentTime,
-          isPlaying: playback.isPlaying,
-          seq: Date.now(),
-        });
-        return;
-      }
-
-      let pool = tvCatalogRef.current;
-      let target = pool.find((i) => i.id === playback.itemId);
-      if (!target) {
-        pool = await fetchTvCatalog();
-        target = pool.find((i) => i.id === playback.itemId);
-      }
-      if (!target) return;
-
-      suppressSyncEmitUntilRef.current = Date.now() + 1200;
-      revokeObjectUrls();
-
-      const matchingKindItems = pool.filter((item) =>
-        target!.kind === 'image'
-          ? item.kind === 'image'
-          : item.kind === 'video' || item.kind === 'audio'
-      );
-      const mappedQueue: CloudEntry[] = matchingKindItems.map((item) => ({
-        name: item.name,
-        path: `/tv/${item.id}/${item.name}`,
-        isFolder: false,
-        kind: item.kind,
-        size: item.size,
-        mimeType: item.mimeType,
-        lastModified: item.addedAt,
-        extension: item.extension,
-      }));
-      const targetIdx = Math.max(
-        0,
-        matchingKindItems.findIndex((i) => i.id === target!.id)
-      );
-      const targetEntry = mappedQueue[targetIdx] || {
-        name: target.name,
-        path: `/tv/${target.id}/${target.name}`,
-        isFolder: false,
-        kind: target.kind,
-        size: target.size,
-        mimeType: target.mimeType,
-        lastModified: target.addedAt,
-        extension: target.extension,
-      };
-
-      setPcPanel('browser');
-      setPlayQueue(mappedQueue.length > 0 ? mappedQueue : [targetEntry]);
-      setQueueIndex(targetIdx);
-      setActiveTrack({
-        entry: targetEntry,
-        streamUrl: `/api/tv/media/${encodeURIComponent(target.id)}`,
-        subtitleUrl: target.subtitleId ? `/api/tv/subtitle/${encodeURIComponent(target.subtitleId)}` : null,
-        subtitleLabel: target.subtitleName || null,
-        tvItemId: target.id,
-        remoteSourceLabel: 'Recebido automaticamente da TV',
-      });
-
-      if (playback.currentTime > 1 || !playback.isPlaying) {
-        window.setTimeout(() => {
-          setRemoteCommand({
-            action: playback.isPlaying ? 'play' : 'pause',
-            currentTime: playback.currentTime,
-            isPlaying: playback.isPlaying,
-            seq: Date.now(),
-          });
-        }, 450);
-      }
-
-      showAutoSyncToast(`Recebido automaticamente da TV: ${target.name}`);
-    },
-    [fetchTvCatalog, revokeObjectUrls, showAutoSyncToast]
-  );
-
-  const { presence, emitPlaybackSync } = useLiveSync({
+  const { presence } = useLiveSync({
     role: 'pc',
     label: 'PC Principal',
     onCatalogUpdate: (payload) => {
@@ -796,9 +733,6 @@ export default function App() {
     },
     onPreferencesUpdate: (prefs) => {
       setPreferences(prefs);
-    },
-    onRemotePlayback: (playback) => {
-      void handleRemotePlaybackFromTv(playback);
     },
   });
 
@@ -895,33 +829,6 @@ export default function App() {
       setPlayQueue(queue);
       setQueueIndex(idx);
 
-      // Handle items that came directly from the TV catalog queue (e.g. received from TV)
-      if (entry.path.startsWith('/tv/')) {
-        const tvId = entry.path.split('/')[2] || '';
-        const matchedTv = tvCatalogRef.current.find((i) => i.id === tvId);
-        if (matchedTv) {
-          setActiveTrack({
-            entry,
-            streamUrl: `/api/tv/media/${encodeURIComponent(matchedTv.id)}`,
-            subtitleUrl: matchedTv.subtitleId
-              ? `/api/tv/subtitle/${encodeURIComponent(matchedTv.subtitleId)}`
-              : null,
-            subtitleLabel: matchedTv.subtitleName || null,
-            tvItemId: matchedTv.id,
-            remoteSourceLabel: 'Sincronizado com a TV',
-          });
-          if (autoSyncEnabledRef.current && Date.now() > suppressSyncEmitUntilRef.current) {
-            void emitPlaybackSync({
-              itemId: matchedTv.id,
-              action: 'load',
-              currentTime: 0,
-              isPlaying: true,
-            });
-          }
-          return;
-        }
-      }
-
       const parentFolderPath = getParentPath(entry.path);
       const siblingEntries =
         sourceMode === 'cloud'
@@ -965,27 +872,6 @@ export default function App() {
           subtitleLabel,
           tvItemId: existingTvMatch?.id || null,
         });
-
-        if (
-          autoSyncEnabledRef.current &&
-          Date.now() > suppressSyncEmitUntilRef.current &&
-          (entry.kind === 'video' || entry.kind === 'audio' || entry.kind === 'image')
-        ) {
-          void ensureEntryOnTv(entry, matchedSub)
-            .then((tvItem) => {
-              if (!tvItem) return;
-              setActiveTrack((prev) =>
-                prev && prev.entry.path === entry.path ? { ...prev, tvItemId: tvItem.id } : prev
-              );
-              return emitPlaybackSync({
-                itemId: tvItem.id,
-                action: 'load',
-                currentTime: 0,
-                isPlaying: true,
-              });
-            })
-            .catch(() => undefined);
-        }
         return;
       }
 
@@ -1033,27 +919,6 @@ export default function App() {
             subtitleLabel,
             tvItemId: existingTvMatch?.id || null,
           });
-
-          if (
-            autoSyncEnabledRef.current &&
-            Date.now() > suppressSyncEmitUntilRef.current &&
-            (entry.kind === 'video' || entry.kind === 'audio' || entry.kind === 'image')
-          ) {
-            void ensureEntryOnTv(entry, matchedSub)
-              .then((tvItem) => {
-                if (!tvItem) return;
-                setActiveTrack((prev) =>
-                  prev && prev.entry.path === entry.path ? { ...prev, tvItemId: tvItem.id } : prev
-                );
-                return emitPlaybackSync({
-                  itemId: tvItem.id,
-                  action: 'load',
-                  currentTime: 0,
-                  isPlaying: true,
-                });
-              })
-              .catch(() => undefined);
-          }
         } catch (err) {
           setFolderError(err instanceof Error ? err.message : 'Erro ao abrir mídia.');
         }
@@ -1066,8 +931,6 @@ export default function App() {
       folderCache,
       currentFolderRawItems,
       revokeObjectUrls,
-      ensureEntryOnTv,
-      emitPlaybackSync,
     ]
   );
 
@@ -1277,30 +1140,6 @@ export default function App() {
     [sourceMode, localIndex, folderCache, currentFolderRawItems, ensureEntryOnTv, fetchTvCatalog]
   );
 
-  const handleSendAndPlayEntryOnTv = useCallback(
-    async (entry: CloudEntry) => {
-      setIsPublishingShare(true);
-      try {
-        const tvItem = await handleSendEntryToTv(entry);
-        if (tvItem) {
-          setActiveTrack((prev) =>
-            prev && prev.entry.path === entry.path ? { ...prev, tvItemId: tvItem.id } : prev
-          );
-          await emitPlaybackSync({
-            itemId: tvItem.id,
-            action: 'load',
-            currentTime: 0,
-            isPlaying: true,
-          });
-          showAutoSyncToast(`Enviado para reprodução automática na TV: ${tvItem.name}`);
-        }
-      } finally {
-        setIsPublishingShare(false);
-      }
-    },
-    [handleSendEntryToTv, emitPlaybackSync, showAutoSyncToast]
-  );
-
   const openShareForEntry = useCallback(
     (entry: CloudEntry, knownStreamUrl?: string | null) => {
       setShareEntry(entry);
@@ -1335,12 +1174,6 @@ export default function App() {
               setIsPublishingShare(false);
             }
           },
-      onSendAndPlayOnTv:
-        shareEntry.isFolder || shareEntry.kind === 'subtitle' || shareEntry.kind === 'other'
-          ? null
-          : async () => {
-              await handleSendAndPlayEntryOnTv(shareEntry);
-            },
     };
   }, [
     shareEntry,
@@ -1350,20 +1183,16 @@ export default function App() {
     sourceMode,
     isPublishingShare,
     handleSendEntryToTv,
-    handleSendAndPlayEntryOnTv,
   ]);
 
   const breadcrumbs = useMemo(() => buildBreadcrumbs(currentPath), [currentPath]);
 
-  if (isTvRoute) {
-    return (
-      <TvApp
-        onSwitchToPc={() => {
-          void fetchTvCatalog();
-          navigateRoute('/');
-        }}
-      />
-    );
+  if (routePath === '/tv') {
+    return <TvApp />;
+  }
+
+  if (routePath === '/mobile') {
+    return <MobileApp />;
   }
 
   return (
@@ -1408,6 +1237,7 @@ export default function App() {
             setMobileSidebarOpen(false);
           }}
           onOpenTvMode={() => navigateRoute('/tv')}
+          onOpenMobileMode={() => navigateRoute('/mobile')}
           onOpenDesktopModal={() => setIsDesktopModalOpen(true)}
           tvItemCount={tvCatalog.length}
           filterCounts={filterCounts}
@@ -1452,6 +1282,7 @@ export default function App() {
                 setMobileSidebarOpen(false);
               }}
               onOpenTvMode={() => navigateRoute('/tv')}
+              onOpenMobileMode={() => navigateRoute('/mobile')}
               onOpenDesktopModal={() => {
                 setMobileSidebarOpen(false);
                 setIsDesktopModalOpen(true);
@@ -1576,24 +1407,6 @@ export default function App() {
 
             <button
               type="button"
-              onClick={() => void handleToggleAutoSync(!autoSyncEnabled)}
-              title="Ao carregar mídia no PC ou na TV, o outro dispositivo recebe automaticamente"
-              className={`hidden items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors md:inline-flex whitespace-nowrap shrink-0 ${
-                autoSyncEnabled
-                  ? 'border-sky-500/60 bg-sky-500/15 text-sky-300'
-                  : 'border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Radio className="h-3.5 w-3.5" />
-              <span>
-                {autoSyncEnabled
-                  ? `Receber Auto · ${presence.tvCount} TV`
-                  : 'Receber Auto Pausado'}
-              </span>
-            </button>
-
-            <button
-              type="button"
               onClick={() => {
                 setConnectError(null);
                 setIsConnectModalOpen(true);
@@ -1609,32 +1422,17 @@ export default function App() {
         {/* Main Scrollable Viewport */}
         <main className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
           <div className="mx-auto max-w-6xl">
-            {autoSyncNotice && (
-              <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-sky-800/70 bg-sky-950/35 px-4 py-2.5 text-xs font-medium text-sky-200">
-                <span className="flex items-center gap-2 min-w-0">
-                  <Radio className="h-3.5 w-3.5 shrink-0 text-sky-400" />
-                  <span className="truncate">{autoSyncNotice}</span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setAutoSyncNotice(null)}
-                  aria-label="Fechar aviso"
-                  className="text-sky-300/70 hover:text-white shrink-0"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            )}
-
             {pcPanel === 'tv-manager' ? (
               <TvManagerPanel
                 items={tvCatalog}
                 networkInfo={tvNetworkInfo}
+                presence={presence}
                 isUploading={isTvUploading}
                 uploadStatus={tvUploadStatus}
                 onUploadFiles={handleUploadFilesToTv}
                 onRemoveItem={handleRemoveTvItem}
                 onOpenTvMode={() => navigateRoute('/tv')}
+                onOpenMobileMode={() => navigateRoute('/mobile')}
                 savedRegistrations={savedRegistrations}
                 isSyncingCloudId={isSyncingCloudId}
                 onSyncSavedCloud={handleSyncSavedCloud}
@@ -1665,29 +1463,6 @@ export default function App() {
                           )
                       : undefined
                   }
-                  onSendToTvNow={
-                    activeTrack &&
-                    (activeTrack.entry.kind === 'video' ||
-                      activeTrack.entry.kind === 'audio' ||
-                      activeTrack.entry.kind === 'image')
-                      ? () => void handleSendAndPlayEntryOnTv(activeTrack.entry)
-                      : undefined
-                  }
-                  remoteCommand={remoteCommand}
-                  onPlaybackControl={(action, currentTime, isPlaying) => {
-                    if (
-                      autoSyncEnabledRef.current &&
-                      activeTrack?.tvItemId &&
-                      Date.now() > suppressSyncEmitUntilRef.current
-                    ) {
-                      void emitPlaybackSync({
-                        itemId: activeTrack.tvItemId,
-                        action,
-                        currentTime,
-                        isPlaying,
-                      });
-                    }
-                  }}
                   onClose={() => {
                     revokeObjectUrls();
                     setActiveTrack(null);
@@ -1716,9 +1491,7 @@ export default function App() {
                   onSendToTv={(entry) => void handleSendEntryToTv(entry)}
                   onShareEntry={(entry) => openShareForEntry(entry)}
                   sendingTvPath={sendingTvPath}
-                  onSyncFolderToTv={
-                    sourceMode === 'cloud' ? () => void handleSyncCurrentFolderToTv() : undefined
-                  }
+                  onSyncFolderToTv={sourceMode ? () => void handleSyncCurrentFolderToTv() : undefined}
                   isSyncingFolderToTv={isSyncingFolderToTv}
                   syncNotice={syncNotice}
                   searchQuery={searchQuery}
@@ -1752,9 +1525,8 @@ export default function App() {
         target={shareModalTarget}
         networkInfo={tvNetworkInfo}
         presence={presence}
-        autoSyncPlayback={autoSyncEnabled}
-        onToggleAutoSync={(enabled) => void handleToggleAutoSync(enabled)}
         onOpenTvPlay={(tvItemId) => navigateRoute(`/tv?play=${encodeURIComponent(tvItemId)}`)}
+        onOpenMobilePlay={(tvItemId) => navigateRoute(`/mobile?play=${encodeURIComponent(tvItemId)}`)}
       />
 
       <DesktopExeModal

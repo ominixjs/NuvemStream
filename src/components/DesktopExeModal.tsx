@@ -59,10 +59,14 @@ export const DesktopExeModal: React.FC<DesktopExeModalProps> = ({
               Ao iniciar no seu PC, o servidor vincula automaticamente a porta 3000 à sua rede local para que o app do PC e o app da TV conversem sem internet externa.
             </p>
             <div className="mt-3 space-y-1 font-mono text-[11px] text-slate-300">
-              <p>PC Local: http://localhost:3000</p>
+              <p>PC Local (Configuração): http://localhost:3000</p>
               <p>
                 TV na Rede:{' '}
                 {lanIp ? `http://${lanIp}:3000/tv` : 'http://SEU_IP_LOCAL:3000/tv (detectado ao iniciar no PC)'}
+              </p>
+              <p>
+                Celular na Rede:{' '}
+                {lanIp ? `http://${lanIp}:3000/mobile` : 'http://SEU_IP_LOCAL:3000/mobile (detectado ao iniciar no PC)'}
               </p>
             </div>
           </div>
