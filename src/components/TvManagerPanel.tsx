@@ -11,22 +11,25 @@ import {
   Music,
   Plus,
   RefreshCw,
+  Smartphone,
   Trash2,
   Tv,
   Upload,
   Wifi,
 } from 'lucide-react';
-import type { SavedCloudRegistration, TvCatalogItem, TvNetworkInfo } from '../types/media';
+import type { SavedCloudRegistration, SyncPresence, TvCatalogItem, TvNetworkInfo } from '../types/media';
 import { formatBytes, formatDate } from '../utils/media';
 
 interface TvManagerPanelProps {
   items: TvCatalogItem[];
   networkInfo: TvNetworkInfo | null;
+  presence?: SyncPresence;
   isUploading: boolean;
   uploadStatus: string | null;
   onUploadFiles: (files: FileList, collectionName?: string) => Promise<void>;
   onRemoveItem: (id: string) => Promise<void>;
   onOpenTvMode: () => void;
+  onOpenMobileMode: () => void;
   savedRegistrations: SavedCloudRegistration[];
   isSyncingCloudId: string | null;
   onSyncSavedCloud: (id: string, syncPath?: string) => Promise<void>;
@@ -49,11 +52,13 @@ function formatExpirationCountdown(expiresAtIso: string): string {
 export const TvManagerPanel: React.FC<TvManagerPanelProps> = ({
   items,
   networkInfo,
+  presence,
   isUploading,
   uploadStatus,
   onUploadFiles,
   onRemoveItem,
   onOpenTvMode,
+  onOpenMobileMode,
   savedRegistrations,
   isSyncingCloudId,
   onSyncSavedCloud,
@@ -67,11 +72,18 @@ export const TvManagerPanel: React.FC<TvManagerPanelProps> = ({
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
   const [syncPathDrafts, setSyncPathDrafts] = useState<Record<string, string>>({});
 
-  const displayUrls =
+  const displayTvUrls =
     networkInfo?.tvUrls && networkInfo.tvUrls.length > 0
       ? networkInfo.tvUrls
       : networkInfo?.currentOriginTvUrl
       ? [networkInfo.currentOriginTvUrl]
+      : [];
+
+  const displayMobileUrls =
+    networkInfo?.mobileUrls && networkInfo.mobileUrls.length > 0
+      ? networkInfo.mobileUrls
+      : networkInfo?.currentOriginMobileUrl
+      ? [networkInfo.currentOriginMobileUrl]
       : [];
 
   const handleCopy = async (url: string) => {
@@ -116,59 +128,110 @@ export const TvManagerPanel: React.FC<TvManagerPanelProps> = ({
         className="hidden"
       />
 
-      {/* Header Card: LAN Address + TV Mode Launch */}
+      {/* Header Card: LAN Address + TV & Mobile Launch */}
       <div className="rounded-xl border border-slate-800 bg-[#111827] p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="max-w-2xl">
-            <div className="flex items-center gap-2 text-xs font-semibold text-sky-400">
+            <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-sky-400">
               <Wifi className="h-4 w-4" />
-              <span>Transmissão Local na Mesma Rede</span>
+              <span>Central de Configuração no PC · Streaming Individual por Tela</span>
+              {presence && (
+                <span className="font-mono text-[11px] font-normal text-slate-400 tabular-nums">
+                  ({presence.tvCount} TV · {presence.mobileCount} Celular)
+                </span>
+              )}
             </div>
             <h1 className="mt-1.5 text-xl font-bold text-slate-100">
-              Biblioteca da TV (Somente Leitura na TV)
+              Biblioteca da TV e Celular (Somente Leitura)
             </h1>
             <p className="mt-1.5 text-xs leading-relaxed text-slate-400">
-              Adicione aqui arquivos do PC ou cadastre temporariamente uma nuvem (como Koofr) no computador. A Smart TV lê apenas esta biblioteca consolidada na mesma rede Wi-Fi, sem armazenar nem exibir senhas na TV.
+              Todo conteúdo e nuvem é configurado apenas aqui no PC. Ao adicionar uma nuvem ou pasta, a TV e o celular atualizam a biblioteca na hora, reproduzindo cada vídeo de forma independente sem acesso às configurações do computador.
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={onOpenTvMode}
-            className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-sky-500 whitespace-nowrap shrink-0"
-          >
-            <Tv className="h-4 w-4" />
-            <span>Abrir Modo TV nesta Tela</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={onOpenTvMode}
+              className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-sky-500 whitespace-nowrap"
+            >
+              <Tv className="h-4 w-4" />
+              <span>Abrir App da TV</span>
+            </button>
+            <button
+              type="button"
+              onClick={onOpenMobileMode}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-4 py-2.5 text-xs font-semibold text-slate-100 transition-colors hover:bg-slate-800 whitespace-nowrap"
+            >
+              <Smartphone className="h-4 w-4 text-sky-400" />
+              <span>Abrir App do Celular</span>
+            </button>
+          </div>
         </div>
 
-        {displayUrls.length > 0 && (
-          <div className="mt-5 rounded-lg border border-slate-800 bg-slate-950/70 p-4">
-            <p className="mb-2 text-xs font-medium text-slate-300">
-              Abra este endereço no navegador da sua Smart TV (na mesma rede local):
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {displayUrls.map((url) => (
-                <div
-                  key={url}
-                  className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 px-3 py-1.5"
-                >
-                  <span className="font-mono text-xs text-sky-300">{url}</span>
-                  <button
-                    type="button"
-                    onClick={() => void handleCopy(url)}
-                    aria-label={`Copiar ${url}`}
-                    className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
-                  >
-                    {copiedUrl === url ? (
-                      <Check className="h-3.5 w-3.5 text-emerald-400" />
-                    ) : (
-                      <Copy className="h-3.5 w-3.5" />
-                    )}
-                  </button>
+        {(displayTvUrls.length > 0 || displayMobileUrls.length > 0) && (
+          <div className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-2">
+            {displayTvUrls.length > 0 && (
+              <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-slate-300">
+                  <Tv className="h-3.5 w-3.5 text-sky-400" />
+                  <span>Endereço para Smart TV (mesma rede Wi-Fi):</span>
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {displayTvUrls.map((url) => (
+                    <div
+                      key={url}
+                      className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 px-3 py-1.5"
+                    >
+                      <span className="font-mono text-xs text-sky-300">{url}</span>
+                      <button
+                        type="button"
+                        onClick={() => void handleCopy(url)}
+                        aria-label={`Copiar ${url}`}
+                        className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+                      >
+                        {copiedUrl === url ? (
+                          <Check className="h-3.5 w-3.5 text-emerald-400" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              </div>
+            )}
+
+            {displayMobileUrls.length > 0 && (
+              <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-slate-300">
+                  <Smartphone className="h-3.5 w-3.5 text-sky-400" />
+                  <span>Endereço para Celular (navegador do smartphone):</span>
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {displayMobileUrls.map((url) => (
+                    <div
+                      key={url}
+                      className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 px-3 py-1.5"
+                    >
+                      <span className="font-mono text-xs text-sky-300">{url}</span>
+                      <button
+                        type="button"
+                        onClick={() => void handleCopy(url)}
+                        aria-label={`Copiar ${url}`}
+                        className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+                      >
+                        {copiedUrl === url ? (
+                          <Check className="h-3.5 w-3.5 text-emerald-400" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -14,6 +14,7 @@ import {
   LogOut,
   Music,
   Plus,
+  Smartphone,
   Tv,
   Wifi,
 } from 'lucide-react';
@@ -41,6 +42,7 @@ interface SidebarProps {
   activePanel: 'browser' | 'tv-manager';
   onSelectPanel: (panel: 'browser' | 'tv-manager') => void;
   onOpenTvMode: () => void;
+  onOpenMobileMode: () => void;
   onOpenDesktopModal: () => void;
   tvItemCount: number;
   filterCounts: {
@@ -152,6 +154,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activePanel,
   onSelectPanel,
   onOpenTvMode,
+  onOpenMobileMode,
   onOpenDesktopModal,
   tvItemCount,
   filterCounts,
@@ -193,9 +196,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </button>
       </div>
 
-      {/* TV Local Network Section */}
+      {/* TV & Mobile Local Network Section */}
       <div className="space-y-1 border-b border-slate-800/80 p-3">
-        <p className="mb-1.5 px-2 text-[11px] font-medium text-slate-400">TV na Rede Local</p>
+        <p className="mb-1.5 px-2 text-[11px] font-medium text-slate-400">TV e Celular na Rede</p>
         <button
           type="button"
           onClick={() => onSelectPanel('tv-manager')}
@@ -207,7 +210,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         >
           <span className="flex items-center gap-2.5">
             <Wifi className={`h-4 w-4 ${activePanel === 'tv-manager' ? 'text-sky-400' : 'text-slate-400'}`} />
-            <span className="whitespace-nowrap">Biblioteca da TV</span>
+            <span className="whitespace-nowrap">Biblioteca TV e Celular</span>
           </span>
           <span className="font-mono text-[11px] text-slate-400 tabular-nums">{tvItemCount}</span>
         </button>
@@ -219,6 +222,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
         >
           <Tv className="h-4 w-4 text-sky-400" />
           <span className="whitespace-nowrap">Abrir App da TV</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onOpenMobileMode}
+          className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-xs text-slate-300 transition-colors hover:bg-slate-800/60 hover:text-slate-100"
+        >
+          <Smartphone className="h-4 w-4 text-sky-400" />
+          <span className="whitespace-nowrap">Abrir App do Celular</span>
         </button>
 
         <button

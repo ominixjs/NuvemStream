@@ -1,10 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type {
-  AppPreferences,
-  LivePlaybackState,
-  SyncPresence,
-  TvCatalogItem,
-} from '../types/media';
+import { useEffect, useRef, useState } from 'react';
+import type { AppPreferences, SyncPresence, TvCatalogItem } from '../types/media';
 
 export interface CatalogUpdatePayload {
   items: TvCatalogItem[];
@@ -13,11 +8,10 @@ export interface CatalogUpdatePayload {
 }
 
 interface UseLiveSyncOptions {
-  role: 'pc' | 'tv';
+  role: 'pc' | 'tv' | 'mobile';
   label: string;
   onCatalogUpdate?: (payload: CatalogUpdatePayload) => void;
   onPreferencesUpdate?: (prefs: AppPreferences) => void;
-  onRemotePlayback?: (playback: LivePlaybackState) => void;
 }
 
 function createDeviceId(): string {
@@ -32,24 +26,21 @@ export function useLiveSync({
   label,
   onCatalogUpdate,
   onPreferencesUpdate,
-  onRemotePlayback,
 }: UseLiveSyncOptions) {
   const deviceIdRef = useRef<string>(createDeviceId());
   const wsRef = useRef<WebSocket | null>(null);
-  const lastHandledEventIdRef = useRef<string | null>(null);
 
   const onCatalogRef = useRef(onCatalogUpdate);
   const onPrefsRef = useRef(onPreferencesUpdate);
-  const onRemotePlaybackRef = useRef(onRemotePlayback);
 
   onCatalogRef.current = onCatalogUpdate;
   onPrefsRef.current = onPreferencesUpdate;
-  onRemotePlaybackRef.current = onRemotePlayback;
 
   const [isConnected, setIsConnected] = useState(false);
   const [presence, setPresence] = useState<SyncPresence>({
     pcCount: role === 'pc' ? 1 : 0,
     tvCount: role === 'tv' ? 1 : 0,
+    mobileCount: role === 'mobile' ? 1 : 0,
     totalCount: 1,
   });
 
@@ -118,21 +109,6 @@ export function useLiveSync({
                   : 0,
               });
             }
-            // If the other device loaded something very recently (< 15s), auto-receive on connect
-            if (msg.activePlayback && typeof msg.activePlayback === 'object') {
-              const pb = msg.activePlayback as LivePlaybackState;
-              const isRecent = Date.now() - pb.updatedAt < 15000;
-              if (
-                isRecent &&
-                pb.action !== 'close' &&
-                pb.senderDeviceId !== deviceIdRef.current &&
-                pb.senderRole !== role &&
-                pb.eventId !== lastHandledEventIdRef.current
-              ) {
-                lastHandledEventIdRef.current = pb.eventId;
-                onRemotePlaybackRef.current?.(pb);
-              }
-            }
             return;
           }
 
@@ -157,15 +133,6 @@ export function useLiveSync({
               collections,
               activeCloudSyncsCount,
             });
-            return;
-          }
-
-          if (type === 'playback:updated' && msg.playback && typeof msg.playback === 'object') {
-            const pb = msg.playback as LivePlaybackState;
-            if (pb.senderDeviceId === deviceIdRef.current) return;
-            if (pb.eventId && pb.eventId === lastHandledEventIdRef.current) return;
-            lastHandledEventIdRef.current = pb.eventId;
-            onRemotePlaybackRef.current?.(pb);
           }
         } catch {
           // Ignore invalid WebSocket frame
@@ -197,49 +164,9 @@ export function useLiveSync({
     };
   }, [role, label]);
 
-  const emitPlaybackSync = useCallback(
-    async (payload: {
-      itemId: string;
-      action: LivePlaybackState['action'];
-      currentTime?: number;
-      isPlaying?: boolean;
-    }) => {
-      const msg = {
-        type: 'playback:sync',
-        itemId: payload.itemId,
-        action: payload.action,
-        currentTime: payload.currentTime ?? 0,
-        isPlaying: payload.isPlaying ?? true,
-      };
-
-      const ws = wsRef.current;
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(msg));
-        return;
-      }
-
-      // Fallback to HTTP endpoint if socket is reconnecting
-      try {
-        await fetch('/api/sync/playback', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ...msg,
-            senderRole: role,
-            senderDeviceId: deviceIdRef.current,
-          }),
-        });
-      } catch {
-        // Ignore transient failure during reconnect
-      }
-    },
-    [role]
-  );
-
   return {
     deviceId: deviceIdRef.current,
     isConnected,
     presence,
-    emitPlaybackSync,
   };
 }

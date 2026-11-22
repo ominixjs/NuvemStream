@@ -105,31 +105,12 @@ interface InstantCloudItem {
 
 interface AppPreferences {
   autoSaveCloud: boolean;
-  autoSyncPlayback: boolean;
   defaultTtlMinutes: number;
   lastProviderName: string;
   lastServerUrl: string;
   lastUsername: string;
   lastSyncPath: string;
   updatedAt: string | null;
-}
-
-interface LivePlaybackState {
-  eventId: string;
-  itemId: string;
-  name: string;
-  collection: string;
-  kind: 'video' | 'audio' | 'image';
-  extension: string;
-  size: number;
-  subtitleId: string | null;
-  subtitleName: string | null;
-  senderRole: 'pc' | 'tv';
-  senderDeviceId: string;
-  action: 'load' | 'play' | 'pause' | 'seek' | 'close';
-  currentTime: number;
-  isPlaying: boolean;
-  updatedAt: number;
 }
 
 const sessions = new Map<string, CloudSession>();
@@ -676,8 +657,8 @@ async function startServer() {
         const queue: string[] = [reg.syncPath];
         const visited = new Set<string>();
         const discovered: SavedCloudSyncItem[] = [];
-        const MAX_FOLDERS = 15;
-        const MAX_ITEMS = 250;
+        const MAX_FOLDERS = 25;
+        const MAX_ITEMS = 400;
 
         while (queue.length > 0 && visited.size < MAX_FOLDERS && discovered.length < MAX_ITEMS) {
           const dirPath = queue.shift()!;
@@ -1291,26 +1272,8 @@ async function startServer() {
     return lanIps;
   }
 
-  // Detect local network IPv4 addresses for connecting Smart TVs and sharing on the same LAN
-  app.get('/api/tv/network', (req, res) => {
-    const lanIps = getLanIpv4Addresses();
-    const hostHeader = typeof req.headers.host === 'string' ? req.headers.host : `localhost:${PORT}`;
-    const protocol = req.protocol || 'http';
-    const currentOriginBase = `${protocol}://${hostHeader}`;
-    const preferredBaseUrl = lanIps.length > 0 ? `http://${lanIps[0]}:${PORT}` : currentOriginBase;
-    res.json({
-      port: PORT,
-      lanIps,
-      pcUrls: lanIps.map((ip) => `http://${ip}:${PORT}`),
-      tvUrls: lanIps.map((ip) => `http://${ip}:${PORT}/tv`),
-      currentOriginTvUrl: `${currentOriginBase}/tv`,
-      preferredBaseUrl,
-    });
-  });
-
   const DEFAULT_PREFERENCES: AppPreferences = {
     autoSaveCloud: true,
-    autoSyncPlayback: true,
     defaultTtlMinutes: 720,
     lastProviderName: 'Koofr',
     lastServerUrl: 'https://app.koofr.net/dav/Koofr',
@@ -1328,10 +1291,6 @@ async function startServer() {
           typeof parsed.autoSaveCloud === 'boolean'
             ? parsed.autoSaveCloud
             : DEFAULT_PREFERENCES.autoSaveCloud,
-        autoSyncPlayback:
-          typeof parsed.autoSyncPlayback === 'boolean'
-            ? parsed.autoSyncPlayback
-            : DEFAULT_PREFERENCES.autoSyncPlayback,
         defaultTtlMinutes: clampTtlMinutes(parsed.defaultTtlMinutes),
         lastProviderName: sanitizeLabel(parsed.lastProviderName, DEFAULT_PREFERENCES.lastProviderName),
         lastServerUrl:
@@ -1504,10 +1463,10 @@ async function startServer() {
     };
   }
 
-  // Real-time WebSocket Hub (PC <-> TV instant state sync)
+  // Real-time WebSocket Hub (Instant library & preference sync from PC -> TV & Mobile; independent playback)
   interface WsClientMeta {
     deviceId: string;
-    role: 'pc' | 'tv';
+    role: 'pc' | 'tv' | 'mobile';
     label: string;
     connectedAt: number;
   }
@@ -1519,16 +1478,17 @@ async function startServer() {
     maxPayload: 16 * 1024,
   });
   const wsClients = new Map<WebSocket, WsClientMeta>();
-  let activePlayback: LivePlaybackState | null = null;
 
   function getSyncPresence() {
     let pcCount = 0;
     let tvCount = 0;
+    let mobileCount = 0;
     for (const meta of wsClients.values()) {
       if (meta.role === 'tv') tvCount++;
+      else if (meta.role === 'mobile') mobileCount++;
       else pcCount++;
     }
-    return { pcCount, tvCount, totalCount: pcCount + tvCount };
+    return { pcCount, tvCount, mobileCount, totalCount: pcCount + tvCount + mobileCount };
   }
 
   function broadcastWs(payload: unknown, excludeSocket?: WebSocket) {
@@ -1543,66 +1503,6 @@ async function startServer() {
   async function broadcastCatalogUpdated() {
     const catalog = await buildFullTvCatalog(false);
     broadcastWs({ type: 'catalog:updated', ...catalog });
-  }
-
-  async function applyLivePlaybackEvent(input: {
-    itemId: string;
-    action: LivePlaybackState['action'];
-    currentTime: number;
-    isPlaying: boolean;
-    senderRole: 'pc' | 'tv';
-    senderDeviceId: string;
-    excludeSocket?: WebSocket;
-  }): Promise<LivePlaybackState | null> {
-    if (input.action === 'close') {
-      activePlayback = null;
-      const closeEvent: LivePlaybackState = {
-        eventId: crypto.randomUUID(),
-        itemId: input.itemId,
-        name: '',
-        collection: '',
-        kind: 'video',
-        extension: '',
-        size: 0,
-        subtitleId: null,
-        subtitleName: null,
-        senderRole: input.senderRole,
-        senderDeviceId: input.senderDeviceId,
-        action: 'close',
-        currentTime: 0,
-        isPlaying: false,
-        updatedAt: Date.now(),
-      };
-      broadcastWs({ type: 'playback:updated', playback: closeEvent }, input.excludeSocket);
-      return closeEvent;
-    }
-
-    if (!UUID_RE.test(input.itemId)) return null;
-    const catalog = await buildFullTvCatalog(false);
-    const target = catalog.items.find((i) => i.id === input.itemId);
-    if (!target || target.kind === 'subtitle') return null;
-
-    const nextState: LivePlaybackState = {
-      eventId: crypto.randomUUID(),
-      itemId: target.id,
-      name: target.name,
-      collection: target.collection,
-      kind: target.kind,
-      extension: target.extension,
-      size: target.size,
-      subtitleId: target.subtitleId || null,
-      subtitleName: target.subtitleName || null,
-      senderRole: input.senderRole,
-      senderDeviceId: input.senderDeviceId,
-      action: input.action,
-      currentTime: Number.isFinite(input.currentTime) && input.currentTime >= 0 ? input.currentTime : 0,
-      isPlaying: Boolean(input.isPlaying),
-      updatedAt: Date.now(),
-    };
-
-    activePlayback = nextState;
-    broadcastWs({ type: 'playback:updated', playback: nextState }, input.excludeSocket);
-    return nextState;
   }
 
   wss.on('connection', (ws) => {
@@ -1620,12 +1520,17 @@ async function startServer() {
         const type = typeof msg.type === 'string' ? msg.type : '';
 
         if (type === 'client:hello') {
-          const role = msg.role === 'tv' ? 'tv' : 'pc';
+          const role: WsClientMeta['role'] =
+            msg.role === 'tv' ? 'tv' : msg.role === 'mobile' ? 'mobile' : 'pc';
           const deviceId =
             typeof msg.deviceId === 'string' && msg.deviceId.trim().length > 0
               ? msg.deviceId.trim().slice(0, 80)
               : defaultMeta.deviceId;
-          const label = sanitizeLabel(typeof msg.label === 'string' ? msg.label : '', role === 'tv' ? 'Smart TV' : 'PC');
+          const fallbackLabel = role === 'tv' ? 'Smart TV' : role === 'mobile' ? 'Celular' : 'PC';
+          const label = sanitizeLabel(
+            typeof msg.label === 'string' ? msg.label : '',
+            fallbackLabel
+          );
           wsClients.set(ws, {
             deviceId,
             role,
@@ -1644,35 +1549,11 @@ async function startServer() {
                 type: 'sync:init',
                 presence,
                 preferences,
-                activePlayback,
                 catalog,
               })
             );
           }
           broadcastWs({ type: 'presence:updated', presence });
-          return;
-        }
-
-        if (type === 'playback:sync') {
-          const meta = wsClients.get(ws) || defaultMeta;
-          const itemId = typeof msg.itemId === 'string' ? msg.itemId : '';
-          const actionRaw = typeof msg.action === 'string' ? msg.action : 'load';
-          const allowedActions: LivePlaybackState['action'][] = ['load', 'play', 'pause', 'seek', 'close'];
-          const action = allowedActions.includes(actionRaw as LivePlaybackState['action'])
-            ? (actionRaw as LivePlaybackState['action'])
-            : 'load';
-          const currentTime = typeof msg.currentTime === 'number' ? msg.currentTime : 0;
-          const isPlaying = typeof msg.isPlaying === 'boolean' ? msg.isPlaying : action !== 'pause';
-
-          await applyLivePlaybackEvent({
-            itemId,
-            action,
-            currentTime,
-            isPlaying,
-            senderRole: meta.role,
-            senderDeviceId: meta.deviceId,
-            excludeSocket: ws,
-          });
         }
       } catch {
         // Ignore malformed WebSocket payloads
@@ -1703,10 +1584,6 @@ async function startServer() {
           typeof req.body?.autoSaveCloud === 'boolean'
             ? req.body.autoSaveCloud
             : current.autoSaveCloud,
-        autoSyncPlayback:
-          typeof req.body?.autoSyncPlayback === 'boolean'
-            ? req.body.autoSyncPlayback
-            : current.autoSyncPlayback,
         defaultTtlMinutes:
           req.body?.defaultTtlMinutes !== undefined
             ? clampTtlMinutes(req.body.defaultTtlMinutes)
@@ -1731,42 +1608,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/sync/playback', async (req, res) => {
-    try {
-      const itemId = typeof req.body?.itemId === 'string' ? req.body.itemId : '';
-      const senderRole = req.body?.senderRole === 'tv' ? 'tv' : 'pc';
-      const senderDeviceId =
-        typeof req.body?.senderDeviceId === 'string' && req.body.senderDeviceId.trim()
-          ? req.body.senderDeviceId.trim().slice(0, 80)
-          : senderRole;
-      const actionRaw = typeof req.body?.action === 'string' ? req.body.action : 'load';
-      const allowedActions: LivePlaybackState['action'][] = ['load', 'play', 'pause', 'seek', 'close'];
-      const action = allowedActions.includes(actionRaw as LivePlaybackState['action'])
-        ? (actionRaw as LivePlaybackState['action'])
-        : 'load';
-      const currentTime = typeof req.body?.currentTime === 'number' ? req.body.currentTime : 0;
-      const isPlaying = typeof req.body?.isPlaying === 'boolean' ? req.body.isPlaying : true;
-
-      const event = await applyLivePlaybackEvent({
-        itemId,
-        action,
-        currentTime,
-        isPlaying,
-        senderRole,
-        senderDeviceId,
-      });
-
-      if (!event) {
-        res.status(404).json({ error: 'Item não encontrado para sincronização.' });
-        return;
-      }
-      res.json({ playback: event });
-    } catch {
-      res.status(500).json({ error: 'Erro ao sincronizar reprodução.' });
-    }
-  });
-
-  // Detect local network IPv4 addresses for connecting Smart TVs and sharing on the same LAN
+  // Detect local network IPv4 addresses for connecting Smart TVs and Mobile devices on the same LAN
   app.get('/api/tv/network', (req, res) => {
     const lanIps = getLanIpv4Addresses();
     const hostHeader = typeof req.headers.host === 'string' ? req.headers.host : `localhost:${PORT}`;
@@ -1778,7 +1620,9 @@ async function startServer() {
       lanIps,
       pcUrls: lanIps.map((ip) => `http://${ip}:${PORT}`),
       tvUrls: lanIps.map((ip) => `http://${ip}:${PORT}/tv`),
+      mobileUrls: lanIps.map((ip) => `http://${ip}:${PORT}/mobile`),
       currentOriginTvUrl: `${currentOriginBase}/tv`,
+      currentOriginMobileUrl: `${currentOriginBase}/mobile`,
       preferredBaseUrl,
     });
   });
@@ -2567,8 +2411,9 @@ if not exist "dist\\index.html" (
 echo.
 echo ===================================================
 echo   NuvemStream iniciado com roteamento local na rede
-echo   Modo PC: http://localhost:3000
-echo   Modo TV: http://SEU_IP_LOCAL:3000/tv
+echo   Configurador PC: http://localhost:3000
+echo   App TV:          http://SEU_IP_LOCAL:3000/tv
+echo   App Celular:     http://SEU_IP_LOCAL:3000/mobile
 echo ===================================================
 echo.
 
@@ -2618,15 +2463,15 @@ echo Mantenha a pasta "dist" junto ao NuvemStream.exe ao mover ou criar atalho.
 pause
 `;
 
-      const readmeTxt = `NuvemStream para Windows (PC + Smart TV na Rede Local)
-=====================================================
+      const readmeTxt = `NuvemStream para Windows (PC Configurador + Smart TV + Celular na Rede Local)
+==========================================================================
 
 COMO USAR RAPIDAMENTE NO WINDOWS:
 1. Extraia esta pasta para o local desejado (ex: C:\\NuvemStream).
 2. Clique duas vezes em "Iniciar-NuvemStream.bat".
    - O aplicativo inicia o roteamento local na porta 3000 e abre em janela dedicada no PC.
-   - Na aba "TV na Rede Local -> Biblioteca da TV", copie o endereco http://192.168.x.x:3000/tv
-     e abra no navegador da sua Smart TV conectada ao mesmo Wi-Fi.
+   - Na aba "TV na Rede Local -> Biblioteca da TV", copie o endereco /tv para sua Smart TV
+     e o endereco /mobile para abrir no navegador do seu Celular no mesmo Wi-Fi.
 
 COMO GERAR O EXECUTAVEL NuvemStream.exe:
 1. Execute "Gerar-NuvemStream-EXE.bat".
@@ -2674,7 +2519,9 @@ COMO GERAR O EXECUTAVEL NuvemStream.exe:
     console.log(`NuvemStream server listening on http://localhost:${PORT}`);
     if (lanIps.length > 0) {
       for (const ip of lanIps) {
-        console.log(`Roteamento Local (LAN): PC -> http://${ip}:${PORT} | TV -> http://${ip}:${PORT}/tv`);
+        console.log(
+          `Roteamento Local (LAN): PC -> http://${ip}:${PORT} | TV -> http://${ip}:${PORT}/tv | Celular -> http://${ip}:${PORT}/mobile`
+        );
       }
     }
   });

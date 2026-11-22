@@ -201,12 +201,12 @@ export const FolderBrowser: React.FC<FolderBrowserProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 shrink-0">
-          {sourceMode === 'cloud' && onSyncFolderToTv && (
+          {onSyncFolderToTv && (
             <button
               type="button"
               disabled={isSyncingFolderToTv}
               onClick={onSyncFolderToTv}
-              title="Salvar credenciais temporariamente para manter esta pasta sincronizada na TV"
+              title="Enviar e carregar os vídeos desta pasta imediatamente na TV e no Celular"
               className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-800 hover:text-sky-300 disabled:opacity-50 whitespace-nowrap shrink-0"
             >
               <Tv className="h-3.5 w-3.5 text-sky-400" />
