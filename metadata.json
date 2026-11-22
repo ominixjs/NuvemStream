@@ -1,0 +1,8 @@
+{
+  "name": "NuvemStream",
+  "description": "Aplicativo desktop de streaming de mídia conectado a serviços em nuvem gratuitos via WebDAV (como Koofr e Nextcloud) e pastas locais do PC.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
